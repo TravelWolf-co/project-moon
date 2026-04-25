@@ -1,0 +1,9 @@
+node_modules
+.next
+.env
+.env.local
+.DS_Store
+public/photos/**/*.mp4
+public/photos/**/*.mov
+public/photos/**/*.webm
+public/photos/**/*.gif
