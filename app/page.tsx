@@ -432,7 +432,7 @@ const STORYBOOK_PAGES = [
     text: "They lived together in the land of meat for a few weeks and had a mishap here and there but they made thorugh it together and they were very happy together, they were just perfect for each other, but then the Autistic boy said he needed to go and that left her very sad..."
   },
   {
-    text: "But just because he is gone, doesnt mean their story is over..."
+    text: "But just because he is gone, doesnt mean their story is over, so I have a question for you..."
   }
 ] as const;
 const PROPOSAL_ENDING_PAGES: ReadonlyArray<{ title: string; text: string; imageSrc?: string }> = [
