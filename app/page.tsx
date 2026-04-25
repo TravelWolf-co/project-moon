@@ -128,6 +128,7 @@ const STOPS: Stop[] = [
 
 const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json";
 const CARD_ANIMATION_MS = 3;
+const TRAVEL_START_DELAY_MS = 500;
 const ARRIVAL_PAUSE_MS = 500;
 const MAP_WIDTH = 960;
 const MAP_HEIGHT = 560;
@@ -407,7 +408,7 @@ const STORYBOOK_PAGES = [
     text: "Then, she met a boy who was a little bit autistic, and he was very beep beep boop boop and also a little autist, he was a little bit shy but she was interested in his shitty work ethic and math skills. They lived a close few thousdand kilometers away but she was still curious about this little autistic boy, so like the cougar she is, she took a chance."
   },
   {
-    text: "But then the little autistic boy left back for the beautiful land, and she was very sad, not knowing if she would see him again..."
+    text: "But then the little autistic boy went back to the beautiful land, and she was very sad, not knowing if she would see him again..."
   },
   {
     text: "The autistic girl was very excited to see the autistic boy again! She told him that she was going to the land of meat (Turkey) and to meet him there. And the Autistic boy was very excited to see the autistic girl again!"
@@ -419,13 +420,13 @@ const STORYBOOK_PAGES = [
     text: "And one day the autistic girl got a text from the autistic boy saying that he was going to the land of Poles (Poland) and to meet him there. And the Autistic girl was very excited to see the autistic boy again!"
   },
   {
-    text: "They explored the land of Poles together and had a great time and made some wonderful memories together that they decided to go to the wanna be American state of Georgia!"
+    text: "They explored the land of Poles together and had a great time and made some wonderful memories together that they decided to go to the wannabe American state of Georgia!"
   },
   {
-    text: "The wanna be state of Georgia was so great, they decided to go to the land of the arms (Armenia) and see if there was anything there for them..."
+    text: "The wannabe state of Georgia was so great, they decided to go to the land of the arms (Armenia) and see if there was anything there for them..."
   },
   {
-    text: "They had a run in with the mob and got scared (mainly the autist boy), so the autistic boy decided to spend some money and they lived like royals for a few days but then the autistic girl invited the autistic boy to her place in he land of meat!"
+    text: "They had a run-in with the mob and got scared (mainly the autist boy), so the autistic boy decided to spend some money and they lived like royals for a few days but then the autistic girl invited the autistic boy to her place in the land of meat!"
   },
   {
     text: "They lived together in the land of meat for a few weeks and had a mishap here and there but they made thorugh it together and they were very happy together, they were just perfect for each other, but then the Autistic boy said he needed to go and that left her very sad..."
@@ -607,7 +608,7 @@ function isVideoMediaSrc(src: string) {
   return VIDEO_SRC_RE.test(src);
 }
 
-function MemoryMediaCover({ src, label }: { src: string; label: string }) {
+function MemoryMediaCover({ src, label, eager = false }: { src: string; label: string; eager?: boolean }) {
   if (isVideoMediaSrc(src)) {
     return (
       <video
@@ -637,7 +638,7 @@ function MemoryMediaCover({ src, label }: { src: string; label: string }) {
       />
     );
   }
-  return <img src={src} alt={label} className={memoryMediaClassName} loading="lazy" />;
+  return <img src={src} alt={label} className={memoryMediaClassName} loading={eager ? "eager" : "lazy"} />;
 }
 
 const StaticMapLayer = memo(function StaticMapLayer() {
@@ -740,6 +741,7 @@ export default function HomePage() {
   const [awaitingJourneyBegin, setAwaitingJourneyBegin] = useState(false);
   const [activeStop, setActiveStop] = useState(0);
   const [isTraveling, setIsTraveling] = useState(false);
+  const [isTravelPending, setIsTravelPending] = useState(false);
   const [travelFrom, setTravelFrom] = useState<number | null>(null);
   const [travelProgress, setTravelProgress] = useState(0);
   const [showFinale, setShowFinale] = useState(false);
@@ -978,19 +980,26 @@ export default function HomePage() {
     if (toStop <= 0 || toStop >= STOPS.length) return;
     const fromIndex = toStop - 1;
     setShowMobileMemoryCard(false);
-    setTravelFrom(fromIndex);
-    setIsTraveling(true);
+    setIsTravelPending(true);
+    setTravelFrom(null);
+    setIsTraveling(false);
     setTravelProgress(0);
 
     window.setTimeout(() => {
-      setActiveStop(toStop);
-      setIsTraveling(false);
-      setTravelFrom(null);
+      setTravelFrom(fromIndex);
+      setIsTraveling(true);
+      setIsTravelPending(false);
       setTravelProgress(0);
       window.setTimeout(() => {
-        setShowMobileMemoryCard(toStop !== ANKARA_RETURN_STOP_INDEX);
-      }, ARRIVAL_PAUSE_MS);
-    }, CARD_ANIMATION_MS * 1000);
+        setActiveStop(toStop);
+        setIsTraveling(false);
+        setTravelFrom(null);
+        setTravelProgress(0);
+        window.setTimeout(() => {
+          setShowMobileMemoryCard(toStop !== ANKARA_RETURN_STOP_INDEX);
+        }, ARRIVAL_PAUSE_MS);
+      }, CARD_ANIMATION_MS * 1000);
+    }, TRAVEL_START_DELAY_MS);
   };
 
   const handleStorybookAdvance = () => {
@@ -1008,7 +1017,7 @@ export default function HomePage() {
         return;
       }
       setShowStorybook(false);
-      goBackToHome();
+      goToAudioHub();
       return;
     }
     if (storybookMode === "journey") {
@@ -1040,11 +1049,13 @@ export default function HomePage() {
     }
     setPendingJourneyPages([]);
     setPendingJourneyPageIndex(0);
-    goToAudioHub();
+    setShowStorybook(false);
+    setShowQuestionOnly(true);
+    setShowGoodStuffQuestion(false);
   };
 
   const nextStep = () => {
-    if (isTraveling) return;
+    if (isTraveling || isTravelPending) return;
     if (isLastStop) {
       setShowMobileMemoryCard(false);
       window.setTimeout(() => {
@@ -1082,7 +1093,7 @@ export default function HomePage() {
   }, [activeStop]);
 
   useEffect(() => {
-    if (isTraveling) return;
+    if (isTraveling || isTravelPending) return;
     if (showStorybook || showIntro || showAudioHub || showQuestionOnly || showFinale) return;
     if (activeStop !== ANKARA_RETURN_STOP_INDEX) return;
     if (ankaraReturnAutoAdvanceDoneRef.current) return;
@@ -1092,7 +1103,7 @@ export default function HomePage() {
       nextStep();
     }, ARRIVAL_PAUSE_MS);
     return () => window.clearTimeout(timer);
-  }, [activeStop, isTraveling, nextStep, showAudioHub, showFinale, showIntro, showQuestionOnly, showStorybook]);
+  }, [activeStop, isTravelPending, isTraveling, nextStep, showAudioHub, showFinale, showIntro, showQuestionOnly, showStorybook]);
 
   useEffect(() => {
     if (!isTraveling) return;
@@ -1235,6 +1246,17 @@ export default function HomePage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const grouped = Object.values(photoLibrary);
+    if (!grouped.length) return;
+
+    const uniqueImageSources = Array.from(new Set(grouped.flat().filter((src) => !isVideoMediaSrc(src))));
+    uniqueImageSources.slice(0, 80).forEach((src) => {
+      const image = new Image();
+      image.src = src;
+    });
+  }, [photoLibrary]);
 
   return (
     <main className="min-h-dvh bg-[#f7efe4] p-4 pb-[max(env(safe-area-inset-bottom),1rem)] pt-[max(env(safe-area-inset-top),1rem)] sm:p-6">
@@ -1452,7 +1474,7 @@ export default function HomePage() {
                                 key={`proposal-final-${photoSrc}-${index}`}
                                 className="overflow-hidden rounded-[1.75rem]"
                               >
-                                <MemoryMediaCover src={photoSrc} label={`Final memory ${index + 1}`} />
+                                <MemoryMediaCover src={photoSrc} label={`Final memory ${index + 1}`} eager={index === 0} />
                               </SwiperSlide>
                             ))}
                           </Swiper>
@@ -1715,7 +1737,7 @@ export default function HomePage() {
                                 key={`${current.city}-${photoSrc}-${index}`}
                                 className="overflow-hidden rounded-[1.75rem]"
                               >
-                                <MemoryMediaCover src={photoSrc} label={`${current.city} memory ${index + 1}`} />
+                                <MemoryMediaCover src={photoSrc} label={`${current.city} memory ${index + 1}`} eager={index === 0} />
                               </SwiperSlide>
                             ))}
                           </Swiper>
@@ -1728,10 +1750,10 @@ export default function HomePage() {
 
                       <button
                         onClick={nextStep}
-                        disabled={isTraveling}
+                        disabled={isTraveling || isTravelPending}
                         className="mt-auto rounded-full bg-[#67463C] px-6 py-3 text-sm font-medium text-[#fffaf3] transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-55"
                       >
-                        {isTraveling ? t.traveling : isLastStop ? t.seeFinale : t.next}
+                        {isTraveling || isTravelPending ? t.traveling : isLastStop ? t.seeFinale : t.next}
                       </button>
                     </motion.article>
                   )
@@ -1831,7 +1853,7 @@ export default function HomePage() {
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: 108, opacity: 0 }}
                 transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                className="max-h-[86vh] overflow-hidden rounded-3xl bg-[#f6efe6]/95 p-4 shadow-soft backdrop-blur"
+                className="hide-scrollbar max-h-[86vh] overflow-y-auto overscroll-contain rounded-3xl bg-[#f6efe6]/95 p-4 pb-5 shadow-soft backdrop-blur [touch-action:pan-y]"
               >
               <p className="text-sm tracking-wide text-[#7b6656]">{t.memoryCard}</p>
               <h2 className="mt-2 font-serif text-3xl text-[#5b4637]">{currentText.city}</h2>
@@ -1886,7 +1908,7 @@ export default function HomePage() {
                         key={`mobile-${current.city}-${photoSrc}-${index}`}
                         className="overflow-hidden rounded-[1.75rem]"
                       >
-                        <MemoryMediaCover src={photoSrc} label={`${current.city} memory ${index + 1}`} />
+                        <MemoryMediaCover src={photoSrc} label={`${current.city} memory ${index + 1}`} eager={index === 0} />
                       </SwiperSlide>
                     ))}
                   </Swiper>
@@ -1899,10 +1921,10 @@ export default function HomePage() {
 
               <button
                 onClick={nextStep}
-                disabled={isTraveling}
+                disabled={isTraveling || isTravelPending}
                 className="mt-4 w-full rounded-full bg-[#67463C] px-6 py-3 text-sm font-medium text-[#fffaf3] transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-55"
               >
-                {isTraveling ? t.traveling : isLastStop ? t.seeFinale : t.next}
+                {isTraveling || isTravelPending ? t.traveling : isLastStop ? t.seeFinale : t.next}
               </button>
               </motion.article>
             </div>
@@ -2024,6 +2046,13 @@ export default function HomePage() {
         .memory-swiper .swiper-slide-next {
           opacity: 0.68;
           transform: scale(0.93);
+        }
+        .hide-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+          display: none;
         }
       `}</style>
     </main>
