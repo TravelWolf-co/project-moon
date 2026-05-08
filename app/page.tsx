@@ -1354,7 +1354,7 @@ const APP_COPY: Record<
     birthdayKicker: "HAPPY BIRTHDAY",
     birthdayQuestionsTitle: "Luna’s Question Bank",
     birthdayQuestionsDescription:
-      "A little birthday corner for the girl who always has the best (and silliest) questions. Expand a section and pick one.",
+      "Happy birthday Luna, for the girl who always has the best (and most silly) questions! Now you can always have the questions you need.",
     birthdayRandomButton: "Give me a random one",
     birthdayTip: "Tip: press-and-hold any question to copy it like normal.",
     birthdaySpotlightLabel: "SPOTLIGHT",
@@ -1409,7 +1409,7 @@ const APP_COPY: Record<
     birthdayKicker: "FELIZ CUMPLEAÑOS",
     birthdayQuestionsTitle: "Banco de Preguntas de Luna",
     birthdayQuestionsDescription:
-      "Un rinconcito de cumpleaños para la chica que siempre tiene las mejores (y más tontas) preguntas. Abre una sección y elige una.",
+      "Feliz cumpleaños, Luna. Para la chica que siempre tiene las mejores (y más tontas) preguntas. ¡Ahora siempre tendrás las preguntas que necesitas!",
     birthdayRandomButton: "Dame una al azar",
     birthdayTip: "Tip: mantén pulsado cualquier pregunta para copiarla como siempre.",
     birthdaySpotlightLabel: "DESTACADA",
@@ -1464,7 +1464,7 @@ const APP_COPY: Record<
     birthdayKicker: "生日快乐",
     birthdayQuestionsTitle: "Luna 的问题宝库",
     birthdayQuestionsDescription:
-      "给那个总是有最好（也最可爱奇怪）问题的女孩的一角生日小天地。展开一个分组，选一个问题吧。",
+      "Luna，生日快乐！献给那个总是有最好（也最可爱、最傻气）问题的女孩。现在你随时都有你需要的问题。",
     birthdayRandomButton: "来一个随机问题",
     birthdayTip: "提示：长按问题即可像平常一样复制。",
     birthdaySpotlightLabel: "今日问题",
@@ -1519,7 +1519,7 @@ const APP_COPY: Record<
     birthdayKicker: "ALLES GUTE ZUM GEBURTSTAG",
     birthdayQuestionsTitle: "Lunas Fragen-Bank",
     birthdayQuestionsDescription:
-      "Eine kleine Geburtstagsecke für das Mädchen mit den besten (und albernsten) Fragen. Öffne einen Abschnitt und such dir eine aus.",
+      "Alles Gute zum Geburtstag, Luna. Für das Mädchen, das immer die besten (und albernsten) Fragen hat! Jetzt hast du immer die Fragen, die du brauchst.",
     birthdayRandomButton: "Gib mir eine zufällige Frage",
     birthdayTip: "Tipp: zum Kopieren einfach lange auf eine Frage drücken.",
     birthdaySpotlightLabel: "SPOTLIGHT",
@@ -1574,7 +1574,7 @@ const APP_COPY: Record<
     birthdayKicker: "IYI KI DOGDUN",
     birthdayQuestionsTitle: "Luna'nin Soru Bankasi",
     birthdayQuestionsDescription:
-      "Hep en iyi (ve en komik) sorulari soran kiz icin kucuk bir dogum gunu kosesi. Bir bolumu ac ve bir soru sec.",
+      "Iyi ki dogdun Luna. Hep en iyi (ve en komik) sorulari soran kiz icin! Artik her zaman ihtiyacin olan sorular sende.",
     birthdayRandomButton: "Rastgele bir soru ver",
     birthdayTip: "Ipucu: kopyalamak icin soruya uzun bas.",
     birthdaySpotlightLabel: "SPOTLIGHT",
