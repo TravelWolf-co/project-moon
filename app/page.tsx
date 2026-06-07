@@ -1912,6 +1912,117 @@ function getHeadingDegrees(from: [number, number], to: [number, number]): number
   return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
+type SharedBirthdayQuestion = {
+  id: string;
+  couple_id: string;
+  question: string;
+  category_id: BirthdaySectionId | "custom";
+  category_title: string | null;
+  author_name: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type SharedBirthdayResponse = {
+  id: string;
+  couple_id: string;
+  question_key: string;
+  question_id: string | null;
+  responder_name: string;
+  answer: string;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type ActiveBirthdayQuestion = {
+  questionKey: string;
+  sectionTitle: string;
+  question: string;
+  sharedQuestion?: SharedBirthdayQuestion;
+};
+
+type SharedQuestionForm = {
+  question: string;
+  categoryId: BirthdaySectionId | "custom";
+  categoryTitle: string;
+  authorName: string;
+};
+
+type SharedResponseForm = {
+  responderName: string;
+  answer: string;
+};
+
+type ConfirmDialogState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void | Promise<void>;
+};
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const SUPABASE_COUPLE_ID = process.env.NEXT_PUBLIC_SUPABASE_COUPLE_ID ?? "aiden-luna";
+const HAS_SUPABASE_CONFIG = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+const SHARED_QUESTIONS_TABLE = "birthday_custom_questions";
+const SHARED_RESPONSES_TABLE = "birthday_question_responses";
+
+async function supabaseRestRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!HAS_SUPABASE_CONFIG) {
+    throw new Error("Supabase is not configured yet.");
+  }
+
+  const response = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
+    ...init,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      ...(init.headers ?? {})
+    }
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Supabase request failed.");
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+function getSharedQuestionCategoryTitle(question: SharedBirthdayQuestion, language: AppLanguage) {
+  if (question.category_id === "custom") return question.category_title || "Custom";
+  return BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][question.category_id];
+}
+
+function getBuiltInQuestionKey(sectionId: BirthdaySectionId, index: number) {
+  return `builtin:${sectionId}:${index}`;
+}
+
+function getSharedQuestionKey(question: SharedBirthdayQuestion) {
+  return `custom:${question.id}`;
+}
+
+function getEmptyQuestionForm(): SharedQuestionForm {
+  return {
+    question: "",
+    categoryId: "about-us",
+    categoryTitle: "",
+    authorName: ""
+  };
+}
+
+function getEmptyResponseForm(): SharedResponseForm {
+  return {
+    responderName: "",
+    answer: ""
+  };
+}
+
 export default function HomePage() {
   const [language, setLanguage] = useState<AppLanguage>("en");
   const [showLanguagePopup, setShowLanguagePopup] = useState(false);
@@ -1946,6 +2057,18 @@ export default function HomePage() {
   const [activeAudioTrackIndex, setActiveAudioTrackIndex] = useState<number | null>(null);
   const ankaraReturnAutoAdvanceDoneRef = useRef(false);
   const [birthdaySpotlight, setBirthdaySpotlight] = useState<{ sectionTitle: string; question: string } | null>(null);
+  const [sharedBirthdayQuestions, setSharedBirthdayQuestions] = useState<SharedBirthdayQuestion[]>([]);
+  const [sharedBirthdayResponses, setSharedBirthdayResponses] = useState<Record<string, SharedBirthdayResponse[]>>({});
+  const [sharedBirthdayLoading, setSharedBirthdayLoading] = useState(false);
+  const [sharedBirthdaySaving, setSharedBirthdaySaving] = useState(false);
+  const [sharedBirthdayError, setSharedBirthdayError] = useState<string | null>(null);
+  const [showSharedQuestionForm, setShowSharedQuestionForm] = useState(false);
+  const [editingSharedQuestion, setEditingSharedQuestion] = useState<SharedBirthdayQuestion | null>(null);
+  const [sharedQuestionForm, setSharedQuestionForm] = useState<SharedQuestionForm>(() => getEmptyQuestionForm());
+  const [activeSharedQuestion, setActiveSharedQuestion] = useState<ActiveBirthdayQuestion | null>(null);
+  const [editingSharedResponse, setEditingSharedResponse] = useState<SharedBirthdayResponse | null>(null);
+  const [sharedResponseForm, setSharedResponseForm] = useState<SharedResponseForm>(() => getEmptyResponseForm());
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   const mapProjectionScale = PROJECTION_SCALE;
   const t = APP_COPY[language];
@@ -2015,6 +2138,235 @@ export default function HomePage() {
     });
   }, [segments, projection]);
 
+  const pickBirthdaySpotlight = (questions = sharedBirthdayQuestions) => {
+    const builtInPool = BIRTHDAY_QUESTION_SECTIONS.flatMap((section) =>
+      getBirthdayQuestions(language, section.id).map((question) => ({
+        sectionTitle: BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][section.id],
+        question
+      }))
+    );
+    const sharedPool = questions.map((question) => ({
+      sectionTitle: getSharedQuestionCategoryTitle(question, language),
+      question: question.question
+    }));
+    const pool = [...builtInPool, ...sharedPool];
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    setBirthdaySpotlight(pick ?? null);
+  };
+
+  const loadSharedBirthdayData = async () => {
+    if (!HAS_SUPABASE_CONFIG) {
+      setSharedBirthdayError("Add your Supabase URL and anon key to enable shared questions.");
+      return;
+    }
+
+    setSharedBirthdayLoading(true);
+    setSharedBirthdayError(null);
+    try {
+      const questions = await supabaseRestRequest<SharedBirthdayQuestion[]>(
+        `${SHARED_QUESTIONS_TABLE}?couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}&select=*&order=created_at.desc`
+      );
+      setSharedBirthdayQuestions(questions);
+      pickBirthdaySpotlight(questions);
+
+      const responses = await supabaseRestRequest<SharedBirthdayResponse[]>(
+        `${SHARED_RESPONSES_TABLE}?couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}&select=*&order=created_at.asc`
+      );
+      setSharedBirthdayResponses(
+        responses.reduce<Record<string, SharedBirthdayResponse[]>>((acc, response) => {
+          const key = response.question_key || (response.question_id ? getSharedQuestionKey({ id: response.question_id } as SharedBirthdayQuestion) : "");
+          if (!key) return acc;
+          acc[key] = [...(acc[key] ?? []), response];
+          return acc;
+        }, {})
+      );
+    } catch (error) {
+      setSharedBirthdayError(error instanceof Error ? error.message : "Could not load shared questions.");
+    } finally {
+      setSharedBirthdayLoading(false);
+    }
+  };
+
+  const openSharedQuestionForm = (question?: SharedBirthdayQuestion) => {
+    setEditingSharedQuestion(question ?? null);
+    setSharedQuestionForm(
+      question
+        ? {
+            question: question.question,
+            categoryId: question.category_id,
+            categoryTitle: question.category_title ?? "",
+            authorName: question.author_name ?? ""
+          }
+        : getEmptyQuestionForm()
+    );
+    setShowSharedQuestionForm(true);
+  };
+
+  const saveSharedQuestion = async () => {
+    const questionText = sharedQuestionForm.question.trim();
+    const authorName = sharedQuestionForm.authorName.trim();
+    const categoryTitle = sharedQuestionForm.categoryId === "custom" ? sharedQuestionForm.categoryTitle.trim() : "";
+
+    if (!questionText) {
+      setSharedBirthdayError("Please add a question first.");
+      return;
+    }
+    if (sharedQuestionForm.categoryId === "custom" && !categoryTitle) {
+      setSharedBirthdayError("Please name the custom category.");
+      return;
+    }
+
+    setSharedBirthdaySaving(true);
+    setSharedBirthdayError(null);
+    try {
+      const payload = {
+        couple_id: SUPABASE_COUPLE_ID,
+        question: questionText,
+        category_id: sharedQuestionForm.categoryId,
+        category_title: sharedQuestionForm.categoryId === "custom" ? categoryTitle : null,
+        author_name: authorName || null,
+        updated_at: new Date().toISOString()
+      };
+
+      if (editingSharedQuestion) {
+        await supabaseRestRequest<SharedBirthdayQuestion[]>(
+          `${SHARED_QUESTIONS_TABLE}?id=eq.${editingSharedQuestion.id}&couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}`,
+          {
+            method: "PATCH",
+            headers: { Prefer: "return=representation" },
+            body: JSON.stringify(payload)
+          }
+        );
+      } else {
+        await supabaseRestRequest<SharedBirthdayQuestion[]>(SHARED_QUESTIONS_TABLE, {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      setShowSharedQuestionForm(false);
+      setEditingSharedQuestion(null);
+      setSharedQuestionForm(getEmptyQuestionForm());
+      await loadSharedBirthdayData();
+    } catch (error) {
+      setSharedBirthdayError(error instanceof Error ? error.message : "Could not save the question.");
+    } finally {
+      setSharedBirthdaySaving(false);
+    }
+  };
+
+  const deleteSharedQuestion = async (question: SharedBirthdayQuestion) => {
+    setSharedBirthdaySaving(true);
+    setSharedBirthdayError(null);
+    try {
+      await supabaseRestRequest<void>(`${SHARED_RESPONSES_TABLE}?question_key=eq.${encodeURIComponent(getSharedQuestionKey(question))}`, { method: "DELETE" });
+      await supabaseRestRequest<void>(
+        `${SHARED_QUESTIONS_TABLE}?id=eq.${question.id}&couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}`,
+        { method: "DELETE" }
+      );
+      if (activeSharedQuestion?.sharedQuestion?.id === question.id) setActiveSharedQuestion(null);
+      await loadSharedBirthdayData();
+    } catch (error) {
+      setSharedBirthdayError(error instanceof Error ? error.message : "Could not delete the question.");
+    } finally {
+      setSharedBirthdaySaving(false);
+    }
+  };
+
+  const openSharedQuestionResponses = (question: SharedBirthdayQuestion) => {
+    setActiveSharedQuestion({
+      questionKey: getSharedQuestionKey(question),
+      sectionTitle: getSharedQuestionCategoryTitle(question, language),
+      question: question.question,
+      sharedQuestion: question
+    });
+    setEditingSharedResponse(null);
+    setSharedResponseForm(getEmptyResponseForm());
+  };
+
+  const openBuiltInQuestionResponses = (section: (typeof BIRTHDAY_QUESTION_SECTIONS)[number], question: string, index: number) => {
+    setActiveSharedQuestion({
+      questionKey: getBuiltInQuestionKey(section.id, index),
+      sectionTitle: BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][section.id],
+      question
+    });
+    setEditingSharedResponse(null);
+    setSharedResponseForm(getEmptyResponseForm());
+  };
+
+  const startEditingSharedResponse = (response: SharedBirthdayResponse) => {
+    setEditingSharedResponse(response);
+    setSharedResponseForm({
+      responderName: response.responder_name,
+      answer: response.answer
+    });
+  };
+
+  const saveSharedResponse = async () => {
+    if (!activeSharedQuestion) return;
+    const responderName = sharedResponseForm.responderName.trim();
+    const answer = sharedResponseForm.answer.trim();
+    if (!responderName || !answer) {
+      setSharedBirthdayError("Please add your name and response.");
+      return;
+    }
+
+    setSharedBirthdaySaving(true);
+    setSharedBirthdayError(null);
+    try {
+      const payload = {
+        couple_id: SUPABASE_COUPLE_ID,
+        question_key: activeSharedQuestion.questionKey,
+        question_id: activeSharedQuestion.sharedQuestion?.id ?? null,
+        responder_name: responderName,
+        answer,
+        updated_at: new Date().toISOString()
+      };
+
+      if (editingSharedResponse) {
+        await supabaseRestRequest<SharedBirthdayResponse[]>(
+          `${SHARED_RESPONSES_TABLE}?id=eq.${editingSharedResponse.id}&couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}`,
+          {
+            method: "PATCH",
+            headers: { Prefer: "return=representation" },
+            body: JSON.stringify(payload)
+          }
+        );
+      } else {
+        await supabaseRestRequest<SharedBirthdayResponse[]>(SHARED_RESPONSES_TABLE, {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      setEditingSharedResponse(null);
+      setSharedResponseForm(getEmptyResponseForm());
+      await loadSharedBirthdayData();
+    } catch (error) {
+      setSharedBirthdayError(error instanceof Error ? error.message : "Could not save the response.");
+    } finally {
+      setSharedBirthdaySaving(false);
+    }
+  };
+
+  const deleteSharedResponse = async (response: SharedBirthdayResponse) => {
+    setSharedBirthdaySaving(true);
+    setSharedBirthdayError(null);
+    try {
+      await supabaseRestRequest<void>(
+        `${SHARED_RESPONSES_TABLE}?id=eq.${response.id}&couple_id=eq.${encodeURIComponent(SUPABASE_COUPLE_ID)}`,
+        { method: "DELETE" }
+      );
+      await loadSharedBirthdayData();
+    } catch (error) {
+      setSharedBirthdayError(error instanceof Error ? error.message : "Could not delete the response.");
+    } finally {
+      setSharedBirthdaySaving(false);
+    }
+  };
+
   const moveNoButton = () => {
     const x = Math.floor(Math.random() * 190) - 95;
     const y = Math.floor(Math.random() * 110) - 55;
@@ -2082,11 +2434,7 @@ export default function HomePage() {
     setShowFinale(false);
     setShowQuestion(false);
     setShowMobileMemoryCard(false);
-    const pool = BIRTHDAY_QUESTION_SECTIONS.flatMap((section) =>
-      getBirthdayQuestions(language, section.id).map((question) => ({ sectionTitle: BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][section.id], question }))
-    );
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    setBirthdaySpotlight(pick ?? null);
+    pickBirthdaySpotlight();
   };
 
   useEffect(() => {
@@ -2094,6 +2442,11 @@ export default function HomePage() {
     const timer = window.setTimeout(() => setBirthdayConfettiBurstId(null), 7800);
     return () => window.clearTimeout(timer);
   }, [birthdayConfettiBurstId]);
+
+  useEffect(() => {
+    if (!showBirthdayHub) return;
+    void loadSharedBirthdayData();
+  }, [showBirthdayHub]);
 
   const openBirthdayPopup = () => {
     setShowBirthdayPopup(true);
@@ -2621,18 +2974,33 @@ export default function HomePage() {
 
               <div className="mt-4 flex w-full max-w-xl flex-col items-stretch justify-center gap-2 sm:mt-5 sm:max-w-none sm:flex-row sm:items-center">
                 <button
-                  onClick={() => {
-                    const pool = BIRTHDAY_QUESTION_SECTIONS.flatMap((section) =>
-                      getBirthdayQuestions(language, section.id).map((question) => ({ sectionTitle: BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][section.id], question }))
-                    );
-                    const pick = pool[Math.floor(Math.random() * pool.length)];
-                    if (pick) setBirthdaySpotlight(pick);
-                  }}
+                  onClick={() => pickBirthdaySpotlight()}
                   className="w-full rounded-full bg-[#9b5de5] px-5 py-3 text-xs font-semibold text-[#fffaf3] shadow-md transition active:scale-95 sm:w-auto sm:py-2"
                 >
                   {t.birthdayRandomButton}
                 </button>
+                <button
+                  onClick={() => openSharedQuestionForm()}
+                  className="w-full rounded-full bg-[#7a1f2b] px-5 py-3 text-xs font-semibold text-[#fffaf3] shadow-md transition active:scale-95 sm:w-auto sm:py-2"
+                >
+                  Add Question
+                </button>
               </div>
+
+              {!HAS_SUPABASE_CONFIG && (
+                <div className="mt-4 w-full max-w-2xl rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] p-4 text-left text-xs leading-relaxed text-[#6e5949]">
+                  Shared questions are ready, but Supabase is not configured yet. Add
+                  <span className="font-semibold"> NEXT_PUBLIC_SUPABASE_URL</span>,
+                  <span className="font-semibold"> NEXT_PUBLIC_SUPABASE_ANON_KEY</span>, and
+                  <span className="font-semibold"> NEXT_PUBLIC_SUPABASE_COUPLE_ID</span> to enable syncing between both of you.
+                </div>
+              )}
+
+              {sharedBirthdayError && (
+                <div className="mt-4 w-full max-w-2xl rounded-2xl border border-[#d8b3b3] bg-[#fff1f1] p-4 text-left text-xs leading-relaxed text-[#7a1f2b]">
+                  {sharedBirthdayError}
+                </div>
+              )}
 
               {birthdaySpotlight && (
                 <motion.div
@@ -2659,17 +3027,65 @@ export default function HomePage() {
                       </summary>
                       <div className="mt-4 grid gap-2">
                         {getBirthdayQuestions(language, section.id).map((q, idx) => (
-                          <p
+                          <button
                             key={`${section.id}-${idx}`}
-                            className="select-text rounded-2xl border border-[#ead6c0] bg-[#fff8ef] px-4 py-3 font-serif text-[15px] leading-relaxed text-[#5b4637] sm:text-[16px]"
+                            onClick={() => openBuiltInQuestionResponses(section, q, idx)}
+                            className="select-text rounded-2xl border border-[#ead6c0] bg-[#fff8ef] px-4 py-3 text-left shadow-sm transition hover:bg-[#fff3e4] active:scale-[0.99]"
                           >
-                            {q}
-                          </p>
+                            <span className="block font-serif text-[15px] leading-relaxed text-[#5b4637] sm:text-[16px]">{q}</span>
+                            <span className="mt-2 block text-[11px] font-semibold text-[#7b6656]">
+                              {(sharedBirthdayResponses[getBuiltInQuestionKey(section.id, idx)] ?? []).length} responses
+                            </span>
+                          </button>
                         ))}
+                        {sharedBirthdayQuestions
+                          .filter((question) => question.category_id === section.id)
+                          .map((question) => (
+                            <button
+                              key={question.id}
+                              onClick={() => openSharedQuestionResponses(question)}
+                              className="select-text rounded-2xl border border-[#ead6c0] bg-[#fff8ef] px-4 py-3 text-left shadow-sm transition hover:bg-[#fff3e4] active:scale-[0.99]"
+                            >
+                              <span className="block font-serif text-[15px] leading-relaxed text-[#5b4637] sm:text-[16px]">{question.question}</span>
+                              <span className="mt-2 block text-[11px] font-semibold text-[#7b6656]">
+                                {(sharedBirthdayResponses[getSharedQuestionKey(question)] ?? []).length} responses
+                              </span>
+                            </button>
+                          ))}
                       </div>
                     </details>
                   ))}
+                  {sharedBirthdayQuestions.some((question) => question.category_id === "custom") && (
+                    <details
+                      open
+                      className="rounded-3xl border border-[#d8c3ad] bg-[#f8efdf] p-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.5),0_14px_26px_rgba(92,66,43,0.12)] sm:p-5"
+                    >
+                      <summary className="cursor-pointer text-sm font-semibold text-[#5b4637] sm:text-base">Custom Questions</summary>
+                      <div className="mt-4 grid gap-2">
+                        {sharedBirthdayQuestions
+                          .filter((question) => question.category_id === "custom")
+                          .map((question) => (
+                            <button
+                              key={question.id}
+                              onClick={() => openSharedQuestionResponses(question)}
+                              className="select-text rounded-2xl border border-[#ead6c0] bg-[#fff8ef] px-4 py-3 text-left shadow-sm transition hover:bg-[#fff3e4] active:scale-[0.99]"
+                            >
+                              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7b6656]">
+                                {question.category_title || "Custom"}
+                              </p>
+                              <span className="block font-serif text-[15px] leading-relaxed text-[#5b4637] sm:text-[16px]">
+                                {question.question}
+                              </span>
+                              <span className="mt-2 block text-[11px] font-semibold text-[#7b6656]">
+                                {(sharedBirthdayResponses[getSharedQuestionKey(question)] ?? []).length} responses
+                              </span>
+                            </button>
+                          ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
+                {sharedBirthdayLoading && <p className="mt-4 text-center text-xs text-[#7b6656]">Loading shared questions...</p>}
               </div>
 
               <button
@@ -3392,6 +3808,294 @@ export default function HomePage() {
                     className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-6 py-3 text-sm font-semibold text-[#5b4637] transition active:scale-95"
                   >
                     {t.no}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {confirmDialog && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-[#00000066] px-4"
+            >
+              <motion.div
+                initial={{ y: 10, opacity: 0, scale: 0.98 }}
+                animate={{ y: 0, opacity: 1, scale: 1 }}
+                exit={{ y: 8, opacity: 0, scale: 0.99 }}
+                className="w-full max-w-sm rounded-3xl border border-[#d8c3ad] bg-[#f6efe6] p-6 text-center shadow-soft"
+              >
+                <p className="font-serif text-2xl text-[#5b4637]">{confirmDialog.title}</p>
+                <p className="mt-3 text-sm leading-relaxed text-[#6e5949]">{confirmDialog.message}</p>
+                <div className="mt-6 flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => setConfirmDialog(null)}
+                    className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-6 py-3 text-sm font-semibold text-[#5b4637] transition active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const action = confirmDialog.onConfirm;
+                      setConfirmDialog(null);
+                      await action();
+                    }}
+                    className="rounded-full bg-[#7a1f2b] px-6 py-3 text-sm font-semibold text-[#fffaf3] shadow-md transition active:scale-95"
+                  >
+                    {confirmDialog.confirmLabel}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showSharedQuestionForm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[92] flex items-center justify-center bg-[#00000066] px-4"
+            >
+              <motion.div
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 8, opacity: 0 }}
+                className="hide-scrollbar max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-[#d8c3ad] bg-[#f6efe6] p-6 text-left shadow-soft"
+              >
+                <p className="font-serif text-2xl text-[#5b4637]">
+                  {editingSharedQuestion ? "Edit Question" : "Add Question"}
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-[#6e5949]">
+                  Add a question to your shared question bank. It will also become part of the random Spotlight pool.
+                </p>
+
+                <label className="mt-5 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                  Your name
+                  <input
+                    value={sharedQuestionForm.authorName}
+                    onChange={(event) => setSharedQuestionForm((value) => ({ ...value, authorName: event.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                    placeholder="Aiden or Luna"
+                  />
+                </label>
+
+                <label className="mt-4 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                  Category
+                  <select
+                    value={sharedQuestionForm.categoryId}
+                    onChange={(event) =>
+                      setSharedQuestionForm((value) => ({
+                        ...value,
+                        categoryId: event.target.value as BirthdaySectionId | "custom"
+                      }))
+                    }
+                    className="mt-2 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                  >
+                    {BIRTHDAY_QUESTION_SECTIONS.map((section) => (
+                      <option key={section.id} value={section.id}>
+                        {BIRTHDAY_SECTION_TITLES_BY_LANGUAGE[language][section.id]}
+                      </option>
+                    ))}
+                    <option value="custom">Custom category</option>
+                  </select>
+                </label>
+
+                {sharedQuestionForm.categoryId === "custom" && (
+                  <label className="mt-4 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                    Custom category name
+                    <input
+                      value={sharedQuestionForm.categoryTitle}
+                      onChange={(event) => setSharedQuestionForm((value) => ({ ...value, categoryTitle: event.target.value }))}
+                      className="mt-2 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                      placeholder="Example: Travel dreams"
+                    />
+                  </label>
+                )}
+
+                <label className="mt-4 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                  Question
+                  <textarea
+                    value={sharedQuestionForm.question}
+                    onChange={(event) => setSharedQuestionForm((value) => ({ ...value, question: event.target.value }))}
+                    className="mt-2 min-h-28 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm leading-relaxed text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                    placeholder="What should we ask each other?"
+                  />
+                </label>
+
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={() => {
+                      setShowSharedQuestionForm(false);
+                      setEditingSharedQuestion(null);
+                      setSharedQuestionForm(getEmptyQuestionForm());
+                    }}
+                    className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-6 py-3 text-sm font-semibold text-[#5b4637] transition active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveSharedQuestion}
+                    disabled={sharedBirthdaySaving}
+                    className="rounded-full bg-[#7a1f2b] px-6 py-3 text-sm font-semibold text-[#fffaf3] shadow-md transition active:scale-95 disabled:opacity-60"
+                  >
+                    {sharedBirthdaySaving ? "Saving..." : editingSharedQuestion ? "Save Changes" : "Add Question"}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {activeSharedQuestion && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[92] flex items-center justify-center bg-[#00000066] px-4"
+            >
+              <motion.div
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 8, opacity: 0 }}
+                className="hide-scrollbar max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-[#d8c3ad] bg-[#f6efe6] p-6 text-left shadow-soft"
+              >
+                <p className="text-xs font-semibold tracking-[0.18em] text-[#7b6656]">
+                  {activeSharedQuestion.sectionTitle}
+                </p>
+                <p className="mt-3 font-serif text-2xl leading-snug text-[#5b4637]">{activeSharedQuestion.question}</p>
+                {activeSharedQuestion.sharedQuestion && (
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                    <button
+                      onClick={() => openSharedQuestionForm(activeSharedQuestion.sharedQuestion)}
+                      className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-4 py-2 font-semibold text-[#67463C]"
+                    >
+                      Edit question
+                    </button>
+                    <button
+                      onClick={() =>
+                        setConfirmDialog({
+                          title: "Delete question?",
+                          message: "This will delete this shared question and all of its responses.",
+                          confirmLabel: "Delete",
+                          onConfirm: () => deleteSharedQuestion(activeSharedQuestion.sharedQuestion!)
+                        })
+                      }
+                      className="rounded-full border border-[#d8b3b3] bg-[#fff1f1] px-4 py-2 font-semibold text-[#7a1f2b]"
+                    >
+                      Delete question
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-5 rounded-3xl border border-[#d8c3ad] bg-[#fffaf3] p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#5b4637]">Responses</p>
+                    <span className="rounded-full bg-[#efe3d5] px-3 py-1 text-[11px] font-semibold text-[#7b6656]">
+                      {(sharedBirthdayResponses[activeSharedQuestion.questionKey] ?? []).length} total
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-3">
+                    {(sharedBirthdayResponses[activeSharedQuestion.questionKey] ?? []).length ? (
+                      (sharedBirthdayResponses[activeSharedQuestion.questionKey] ?? []).map((response) => (
+                        <div key={response.id} className="rounded-2xl border border-[#ead6c0] bg-[#fff4e6] p-4 shadow-[0_10px_24px_rgba(91,70,55,0.06)]">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#ead6c0] bg-[#f7e7d2] font-serif text-sm font-semibold text-[#7a1f2b]">
+                              {response.responder_name.trim().charAt(0).toUpperCase()}
+                            </span>
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7b6656]">{response.responder_name}</p>
+                          </div>
+                          <p className="mt-3 whitespace-pre-wrap font-serif text-[17px] leading-relaxed text-[#5b4637]">
+                            {response.answer}
+                          </p>
+                          <div className="mt-3 flex justify-end gap-2 text-xs">
+                            <button
+                              onClick={() => startEditingSharedResponse(response)}
+                              className="rounded-full border border-[#d8c3ad] bg-[#fffaf3] px-3 py-1.5 font-semibold text-[#67463C] shadow-sm transition hover:bg-[#fff0dc] active:scale-95"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() =>
+                                setConfirmDialog({
+                                  title: "Delete response?",
+                                  message: "This will remove this answer from the shared question.",
+                                  confirmLabel: "Delete",
+                                  onConfirm: () => deleteSharedResponse(response)
+                                })
+                              }
+                              className="rounded-full border border-[#e2b9b9] bg-[#fff3f0] px-3 py-1.5 font-semibold text-[#7a1f2b] shadow-sm transition hover:bg-[#ffe8e2] active:scale-95"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="rounded-2xl border border-dashed border-[#d8c3ad] bg-[#fff4e6] px-4 py-5 text-center text-sm text-[#6e5949]">
+                        No responses yet. Be the first one.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-3xl border border-[#d8c3ad] bg-[#efe3d5] p-4">
+                  <p className="text-sm font-semibold text-[#5b4637]">
+                    {editingSharedResponse ? "Edit response" : "Add response"}
+                  </p>
+                  <label className="mt-4 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                    Your name
+                    <input
+                      value={sharedResponseForm.responderName}
+                      onChange={(event) => setSharedResponseForm((value) => ({ ...value, responderName: event.target.value }))}
+                      className="mt-2 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                      placeholder="Aiden or Luna"
+                    />
+                  </label>
+                  <label className="mt-4 block text-xs font-semibold tracking-wide text-[#7b6656]">
+                    Answer
+                    <textarea
+                      value={sharedResponseForm.answer}
+                      onChange={(event) => setSharedResponseForm((value) => ({ ...value, answer: event.target.value }))}
+                      className="mt-2 min-h-28 w-full rounded-2xl border border-[#d8c3ad] bg-[#fff8ef] px-4 py-3 text-sm leading-relaxed text-[#5b4637] outline-none focus:border-[#9b5de5]"
+                      placeholder="Write your answer..."
+                    />
+                  </label>
+                  <div className="mt-4 flex flex-wrap justify-end gap-3">
+                    {editingSharedResponse && (
+                      <button
+                        onClick={() => {
+                          setEditingSharedResponse(null);
+                          setSharedResponseForm(getEmptyResponseForm());
+                        }}
+                        className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-5 py-2 text-sm font-semibold text-[#5b4637]"
+                      >
+                        Cancel edit
+                      </button>
+                    )}
+                    <button
+                      onClick={saveSharedResponse}
+                      disabled={sharedBirthdaySaving}
+                      className="rounded-full bg-[#7a1f2b] px-5 py-2 text-sm font-semibold text-[#fffaf3] shadow-md disabled:opacity-60"
+                    >
+                      {sharedBirthdaySaving ? "Saving..." : editingSharedResponse ? "Save Response" : "Add Response"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={() => {
+                      setActiveSharedQuestion(null);
+                      setEditingSharedResponse(null);
+                      setSharedResponseForm(getEmptyResponseForm());
+                    }}
+                    className="rounded-full border border-[#cdb8a2] bg-[#fff8ef] px-6 py-3 text-sm font-semibold text-[#5b4637] transition active:scale-95"
+                  >
+                    Close
                   </button>
                 </div>
               </motion.div>

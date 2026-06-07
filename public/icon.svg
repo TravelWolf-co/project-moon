@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Our Journey icon">
+  <rect width="512" height="512" rx="112" fill="#f7efe4"/>
+  <circle cx="256" cy="256" r="156" fill="#efe3d5" stroke="#7a1f2b" stroke-width="18"/>
+  <path d="M256 150c38 45 85 79 85 134 0 52-38 89-85 89s-85-37-85-89c0-55 47-89 85-134Z" fill="#9b5de5"/>
+  <path d="M256 151c-38 45-85 79-85 134 0 52 38 89 85 89" fill="#7a1f2b" opacity="0.9"/>
+  <circle cx="211" cy="255" r="14" fill="#fff8ef"/>
+  <circle cx="301" cy="255" r="14" fill="#fff8ef"/>
+  <path d="M219 315c25 22 49 22 74 0" fill="none" stroke="#fff8ef" stroke-width="16" stroke-linecap="round"/>
+</svg>
